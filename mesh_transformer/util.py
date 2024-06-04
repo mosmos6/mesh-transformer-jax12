@@ -1,8 +1,7 @@
 import jax
 import jax.numpy as jnp
-# from jax.experimental.pjit import with_sharding_constraint
 from jax.lax import with_sharding_constraint
-from optax import AdditiveWeightDecayState, GradientTransformation
+import optax
 from typing import NamedTuple
 import chex
 
@@ -13,7 +12,6 @@ def maybe_shard(x, resource):
     except ValueError as e:
         print(e)
         return x
-
 
 def gpt3_schedule(warmup_steps,
                   total_steps,
@@ -27,19 +25,16 @@ def gpt3_schedule(warmup_steps,
 
     return sch
 
-
 def global_norm(updates, use_psum=True):
     pre_sqrt = sum([jnp.sum(jnp.square(x)) for x in jax.tree_leaves(updates)])
     if use_psum:
         pre_sqrt = jax.lax.psum(pre_sqrt, "shard")
     return jnp.sqrt(pre_sqrt)
 
-
 class ClipByGlobalNormState(NamedTuple):
     """The `clip_by_global_norm` transformation is stateless."""
 
-
-def clip_by_global_norm(max_norm, use_psum=True) -> GradientTransformation:
+def clip_by_global_norm(max_norm, use_psum=True) -> optax.GradientTransformation:
     """Clip updates using their global norm.
 
     References:
@@ -63,91 +58,59 @@ def clip_by_global_norm(max_norm, use_psum=True) -> GradientTransformation:
             lambda t: jnp.where(trigger, t, (t / g_norm) * max_norm), updates)
         return updates, state
 
-    return GradientTransformation(init_fn, update_fn)
+    return optax.GradientTransformation(init_fn, update_fn)
 
-
-def additive_weight_decay(weight_decay: float = 0.0) -> GradientTransformation:
-    """Add parameter scaled by `weight_decay`, to all parameters with more than one dim (i.e. exclude ln, bias etc)
-
-    Args:
-      weight_decay: a scalar weight decay rate.
-
-    Returns:
-      An (init_fn, update_fn) tuple.
-    """
-
-    def init_fn(_):
-        return AdditiveWeightDecayState()
-
-    def update_fn(updates, state, params):
-        updates = jax.tree_map(lambda g, p: g + weight_decay * p * (len(g.shape) > 1), updates, params)
-        return updates, state
-
-    return GradientTransformation(init_fn, update_fn)
-
+# Use Optax's built-in additive weight decay
+def additive_weight_decay(weight_decay: float = 0.0) -> optax.GradientTransformation:
+    return optax.additive_weight_decay(weight_decay)
 
 def to_f32(t):
     return jax.tree_map(lambda x: x.astype(jnp.float32) if x.dtype == jnp.bfloat16 else x, t)
 
-
 def to_bf16(t):
     return jax.tree_map(lambda x: x.astype(jnp.bfloat16) if x.dtype == jnp.float32 else x, t)
 
-
 def to_f16(t):
     return jax.tree_map(lambda x: x.astype(jnp.float16) if x.dtype == jnp.float32 else x, t)
-
 
 # identity in forward pass, psum in backward
 @jax.custom_vjp
 def f_psum(x):
     return x
 
-
 def f_psum_fwd(x):
     return f_psum(x), None
-
 
 def f_psum_bwd(_, g):
     return jax.lax.psum(g, "shard"),
 
-
 f_psum.defvjp(f_psum_fwd, f_psum_bwd)
-
 
 # identity in forward pass, pmean in backward
 @jax.custom_vjp
 def f_pmean(x):
     return x
 
-
 def f_pmean_fwd(x):
     return f_psum(x), None
-
 
 def f_pmean_bwd(_, g):
     return jax.lax.pmean(g, "shard"),
 
-
 f_pmean.defvjp(f_pmean_fwd, f_pmean_bwd)
-
 
 # psum in forward pass, identity in backward
 @jax.custom_vjp
 def g_psum(x):
     return jax.lax.psum(x, "shard")
 
-
 def g_psum_fwd(x):
     return g_psum(x), None
-
 
 def g_psum_bwd(_, g):
     return g,
 
-
 g_psum.defvjp(g_psum_fwd, g_psum_bwd)
-
 
 def shard_axis(x, axis_size, axis_name):
     # in_shape = x.shape
@@ -162,7 +125,6 @@ def shard_axis(x, axis_size, axis_name):
 
     return x
 
-
 def unshard_axis(x, axis_name):
     # in_shape = x.shape
     x = jax.lax.all_gather(x, axis_name)
@@ -172,7 +134,6 @@ def unshard_axis(x, axis_name):
     # assert x.shape[-1] == 4096
     # print("unshard out", x.shape, "in", in_shape)
     return x
-
 
 # print but only on the first node
 def head_print(*args, **kwargs):
