@@ -15,8 +15,8 @@ fabric~=2.6.0
 optax==0.1.9
 dm-haiku==0.0.12
 ray[default]
-jax==0.4.26
-jaxlib==0.4.26
+jax==0.4.27
+jaxlib==0.4.27
 Flask==2.1.1 # changed on 28march
 cloudpickle~=1.5.0
 tensorflow==2.15.0
@@ -29,4 +29,4 @@ fastapi
 uvicorn
 lm_dataformat~=0.0.20
 pathy
-chex==0.1.86
+chex==0.1.88
